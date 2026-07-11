@@ -11,14 +11,12 @@ next to Burp, reads every request/response flowing through the proxy,
 persists findings to SQLite, indexes them in ChromaDB for cross-request
 semantic memory, and surfaces results in a Streamlit dashboard.
 
-<<<<<<< HEAD
 ## What's Argus Is.
-=======
+
 **Everything runs on the operator's machine.** No cloud APIs, no remote
 model endpoints, no telemetry. Every component binds to `127.0.0.1`. The
 bridge enforces a shared-secret bearer token so other local processes
 cannot poison findings.
->>>>>>> 338c9c6 (Public-safe defaults, expanded README, CI, changelog)
 
 ## Features
 
