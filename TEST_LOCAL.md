@@ -7,9 +7,9 @@ pipeline wiring. **Phase B** runs the real stack against a local model.
 All commands assume you are inside the repo root:
 
 ```bash
-cd C:\Users\samue\Documents\Self\llm-pentest\Argus
+cd C:\Users\[PROFILE_NAME]\[ARGUS_DIRECTORY]
 # On WSL / Git Bash:
-cd /c/Users/samue/Documents/Self/llm-pentest/Argus
+cd /c/Users/[PROFILE_NAME]/[ARGUS_DIRECTORY]
 ```
 
 ---
