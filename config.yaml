@@ -78,7 +78,7 @@ memory:
 
 # ---- Agentic probe (opt-in) -------------------------------------------------
 agentic:
-  enabled: true
+  enabled: false
   max_probes_per_finding: 3
   session_budget: 20
 
@@ -90,7 +90,7 @@ agentic:
 # Same gate as agentic.enabled - only flip on for targets you are
 # authorised to actively exploit.
 recommender:
-  intrusive: true
+  intrusive: false
 
 # ---- LLM self-consistency (opt-in) ------------------------------------------
 # When runs > 1, every analyse() call runs N times and only findings that
