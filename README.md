@@ -1,199 +1,298 @@
-# Argus — Local LLM-assisted Web Application Pentest Pipeline
+# Argus — Air-gapped LLM-assisted Web Application Pentest Triage
 
-Argus is an offline-first triage assistant for web application pentesting.
-A Burp Suite extension forwards every interesting request/response pair to
-a local FastAPI bridge. The bridge runs a fast deterministic detector tier,
-consults a content-addressed LLM response cache, routes to the best-fit
-local **Ollama** model, runs a self-critique pass to prune hallucinations,
-persists structured findings to SQLite, indexes them in a local
-**ChromaDB** vector store with semantic dedup, and exposes a Streamlit
-dashboard for live triage and Markdown reporting.
+[![tests](https://github.com/pivotpoint-sec/Argus/actions/workflows/tests.yml/badge.svg)](https://github.com/pivotpoint-sec/Argus/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
-**Nothing leaves the machine.** No cloud APIs, no remote model endpoints,
-no telemetry. Every component binds to `127.0.0.1`. The bridge enforces a
-shared-secret bearer token so other local processes cannot poison findings.
+Argus is a Burp Suite extension paired with a local FastAPI bridge that runs
+a locally-hosted LLM (Ollama / Mistral) plus a tier of deterministic OWASP-
+aligned detectors to triage web application traffic in real time. It sits
+next to Burp, reads every request/response flowing through the proxy,
+persists findings to SQLite, indexes them in ChromaDB for cross-request
+semantic memory, and surfaces results in a Streamlit dashboard.
 
+<<<<<<< HEAD
 ## What's Argus Is.
+=======
+**Everything runs on the operator's machine.** No cloud APIs, no remote
+model endpoints, no telemetry. Every component binds to `127.0.0.1`. The
+bridge enforces a shared-secret bearer token so other local processes
+cannot poison findings.
+>>>>>>> 338c9c6 (Public-safe defaults, expanded README, CI, changelog)
 
-- **Deterministic detector tier** — JWTs, cloud/API keys, stack traces,
-  missing/weak security headers, private-IP leakage. These run in
-  microseconds before the LLM and always persist, regardless of what the
-  model says. They also seed the LLM prompt so it doesn't re-raise them.
+## Features
+
+- **20+ deterministic detectors** covering the OWASP Top 10 (2021): SQLi,
+  XSS, command injection, XXE, SSRF, JWT misconfiguration, HTTP request
+  smuggling, GraphQL misconfiguration, insecure deserialisation, mass
+  assignment / parameter pollution, SSTI, NoSQL injection, missing SRI,
+  vulnerable-component fingerprinting, debug-endpoint exposure, cloud
+  secret leakage, stack-trace leakage, missing / weak security headers.
+- **Cross-request chain detection** — IDOR chains (same URL shape,
+  different IDs, distinct user identities in evidence), auth-bypass
+  chains (403 then 200 to the same endpoint), privilege-escalation paths
+  (same parameter in `/user/` and `/admin/`), session-token reuse across
+  hours. Findings a per-request scanner cannot see.
+- **Closed-loop confirmer** — targeted follow-up probes that prove or
+  disprove flagged findings: time-based SQLi (`SLEEP(2)` timing delta),
+  XSS reflection (unique canary in HTML context), command-injection
+  (output echo), SSRF (manual review, needs OOB callback). Gated by
+  `agentic.enabled`.
+- **Stack-aware payload recommender** — reads the attack-surface graph
+  and existing findings, returns ranked (payload, target, rationale,
+  lateral targets) tuples. Intrusive payloads gated by
+  `recommender.intrusive`.
 - **Content-addressed LLM cache** — `(model, system_prompt, normalised
-  user_prompt, URL shape)` → SHA-256 → SQLite. Numeric IDs, UUIDs and hex
-  blobs are replaced with placeholders, so `/users/1`, `/users/2`, … all
-  share one cached verdict. Typical real-engagement hit rate is very high.
-- **Multi-model router** — CodeLlama for JS/uploads/SSTI, LLaMA-3 for auth
-  flows, Mistral for everything else. Unavailable models fall back silently
-  to the default.
-- **Self-critique pass** — after primary analysis, a cheap model prunes
-  findings whose evidence doesn't actually appear in the pair. Can only
-  remove, never invent.
-- **Semantic dedup** — ChromaDB distance ≤ config threshold collapses
-  near-duplicates; the dashboard shows `×N` occurrences instead of N rows.
-- **Redaction** of JWTs, cookies, passwords, private keys, API keys before
-  logging and before storing evidence in embeddings.
-- **Bearer-token auth** on every bridge endpoint (configurable).
-- **CWE + CVSS fields** on every finding, alongside OWASP.
-- **New endpoints:** `/state` (one-shot bundle for the dashboard),
-  `/metrics` (Prometheus text), `/diff` (two responses compared),
-  `/poc` (minimal reproduction snippet), `/session/report` (Markdown
-  engagement report), `/probe` (agentic follow-up; off by default).
-- **JSON-structured logs** with correlation IDs propagated from Burp into
-  DB rows so a specific exchange can be traced end-to-end.
-- **Docker-compose** spinning up Ollama + bridge + dashboard with one
-  command, all bound to 127.0.0.1.
-- **Pytest suite** covering filter, detectors, redaction, cache, JSON
-  extraction, and an end-to-end pipeline run.
+  user_prompt, URL shape)` → SHA-256 → SQLite. Numeric IDs, UUIDs and
+  hex blobs are placeholderised so `/users/1`, `/users/2`, … share a
+  cached verdict.
+- **Multi-model router** — CodeLlama for JS/SSTI, LLaMA-3 for auth
+  flows, Mistral for everything else. Unavailable models fall back
+  silently to the default.
+- **LLM self-critique pass** — a second pass prunes findings whose
+  evidence doesn't appear in the pair. Can only remove, never invent.
+- **LLM self-consistency voting** (opt-in) — run analyse() N times,
+  keep only findings that survive a majority vote. Cuts hallucinations
+  at N× compute cost.
+- **Business-logic correlation** — `POST /correlate` asks the LLM to
+  surface logic bugs that span multiple existing findings on the same
+  host (token reuse, state-machine violations, cross-flow privilege
+  drift). Every emitted finding cites the contributing finding IDs.
+- **ChromaDB semantic memory** — per-session vector store, dedup on
+  cosine distance, FIFO-capped at 10 000 entries.
+- **Redaction** of JWTs, cookies, passwords, private keys, API keys
+  before logging and before embedding text is stored.
+- **Bearer-token auth** on every bridge endpoint.
+- **CWE + CVSS + OWASP category** on every finding.
+- **Markdown engagement report** with executive summary, per-finding
+  write-up, target / duration / volume counters.
+- **SARIF 2.1.0 export** for GitHub code-scanning, DefectDojo, JIRA
+  Compass, Splunk.
+- **Prometheus metrics endpoint** — LLM calls, cache hit/miss, filter
+  kept/dropped, dedup collapsed, detector findings.
+- **JSON-structured logs** with correlation IDs propagated from Burp
+  into DB rows.
+- **Docker-compose** starts Ollama + bridge + dashboard in one command,
+  all bound to `127.0.0.1`.
+- **80+ automated tests** covering filter, detectors, redaction, cache,
+  JSON extraction, chain detection, confirmer, recommender, consistency
+  voting, SARIF shape, and an end-to-end pipeline run.
 
 ## Project layout
 
 ```
-llm-pentest/
+argus/
 ├── burp_extension/
-│   ├── llm_analyser.py        # Burp Montoya extension (Python / Jython)
+│   ├── llm_analyser.py        # Burp legacy IBurpExtender extension (Jython 2.7)
 │   └── prompts.py             # Versioned system + user prompts
 ├── llm_bridge/
-│   ├── bridge.py              # FastAPI server — Burp talks to this
+│   ├── bridge.py              # FastAPI server - Burp talks to this
 │   ├── analyser.py            # LLM call logic, retry, cache, critique
 │   ├── filter.py              # Pre-filter heuristics
-│   ├── detectors.py           # Deterministic regex detectors
+│   ├── detectors.py           # Deterministic regex detectors (core tier)
+│   ├── owasp_extras.py        # Extended A06/A08/A10 + SSTI/NoSQL/debug
+│   ├── chains.py              # Cross-request chain detector
+│   ├── confirmer.py           # Closed-loop confirmation probes
+│   ├── recommender.py         # Payload recommender + /recommend endpoint
+│   ├── payloads.py            # Stack-aware payload library
+│   ├── surface.py             # Attack-surface graph builder
 │   ├── cache.py               # Content-addressed LLM response cache
 │   ├── router.py              # Multi-model dispatcher
 │   ├── critique.py            # Self-critique / pruning pass
+│   ├── consistency.py         # LLM self-consistency voting
 │   ├── memory.py              # ChromaDB session memory + dedup
+│   ├── sarif.py               # SARIF 2.1.0 export
 │   ├── redact.py              # Sensitive-data scrubbing
 │   ├── auth.py                # Bearer-token guard
 │   ├── metrics.py             # In-memory counters + histograms
-│   ├── probe.py               # Agentic follow-up probes (gated)
+│   ├── probe.py               # Agentic follow-up probes (opt-in)
 │   ├── report.py              # Markdown engagement report generator
 │   ├── models.py              # Pydantic schemas
 │   └── config.py              # Loader for config.yaml + JSON logging
 ├── storage/
 │   ├── db.py                  # SQLite via SQLModel (with migrations)
-│   ├── schema.sql             # Authoritative table definitions
-│   ├── chroma/                # (created at runtime) vector store
-│   ├── findings.db            # (created at runtime)
-│   └── llm_cache.db           # (created at runtime)
+│   └── schema.sql             # Authoritative table definitions
 ├── dashboard/
 │   └── app.py                 # Streamlit live findings dashboard
-├── tests/                     # pytest suite
-├── logs/                      # Rotating structured JSON logs
+├── installer/
+│   ├── install.sh             # Linux / macOS installer
+│   ├── install.ps1            # Windows installer
+│   └── requirements.txt       # Pinned dependencies
+├── tests/                     # 80+ pytest tests
 ├── config.yaml                # ALL runtime knobs
 ├── Dockerfile                 # Non-root Python 3.11-slim image
 ├── docker-compose.yml         # Ollama + bridge + dashboard, all local
 ├── requirements.txt
-└── README.md
+├── README.md
+├── USAGE.md                   # Step-by-step usage guide
+├── TEST_LOCAL.md              # Local verification guide
+├── SECURITY.md                # Vulnerability disclosure policy
+└── CONTRIBUTING.md            # How to contribute
 ```
 
-## Setup — native
+## Quick install
 
-1. Install [Ollama](https://ollama.ai) and pull at least one model:
+**Linux / macOS:**
 
-   ```bash
-   ollama pull mistral
-   ollama pull llama3       # optional: used by the auth router lane
-   ollama pull codellama    # optional: used by the code router lane
-   ollama pull phi3         # optional: used by the critique pass
-   ```
+```bash
+git clone https://github.com/pivotpoint-sec/Argus.git
+cd Argus
+./installer/install.sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/pivotpoint-sec/Argus.git
+cd Argus
+.\installer\install.ps1
+```
+
+The installer creates a venv, installs deps, pulls the default Ollama
+model, generates a fresh auth token in `config.yaml`, and prints the
+next-step instructions.
+
+## Manual install
+
+If you'd rather do it yourself:
+
+1. Install [Ollama](https://ollama.com/download) and pull at least one model:
+
+    ```bash
+    ollama pull mistral
+    ollama pull llama3       # optional: used by the auth router lane
+    ollama pull codellama    # optional: used by the code / SSTI router lane
+    ollama pull phi3         # optional: used by the critique pass
+    ```
 
 2. Install Python dependencies (Python 3.11+):
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
+    pip install -r requirements.txt
+    ```
 
 3. Set a shared secret in `config.yaml`:
 
-   ```yaml
-   auth:
-     enabled: true
-     token: your-long-random-string
-   ```
+    ```yaml
+    auth:
+      enabled: true
+      token: your-long-random-string
+    ```
 
-   Also export it for the Burp extension so it can send `X-Argus-Token`:
+    Also export it for the Burp extension so it can send `X-Argus-Token`:
 
-   ```bash
-   export ARGUS_TOKEN=your-long-random-string
-   ```
+    ```bash
+    export ARGUS_TOKEN=your-long-random-string
+    # Windows PowerShell:
+    $env:ARGUS_TOKEN = "your-long-random-string"
+    ```
 
 4. Start the bridge:
 
-   ```bash
-   uvicorn llm_bridge.bridge:app --host 127.0.0.1 --port 8765
-   ```
+    ```bash
+    python -m llm_bridge.bridge
+    ```
 
 5. Start the dashboard (in another terminal):
 
-   ```bash
-   streamlit run dashboard/app.py
-   ```
+    ```bash
+    streamlit run dashboard/app.py
+    ```
 
 6. Load the Burp extension:
-   - In Burp, install **Jython 2.7** under *Settings → Extensions → Python
-     environment*.
-   - *Extensions → Add → Extension type: Python →* select
-     `burp_extension/llm_analyser.py`.
-   - Confirm `ARGUS_TOKEN` is exported in the shell you launched Burp from,
-     or create `burp_extension/argus_config.json`:
 
-     ```json
-     {"bridge_url": "http://127.0.0.1:8765/analyse",
-      "auth_token": "your-long-random-string"}
-     ```
+    - In Burp, install a **Jython 2.7 standalone JAR** under
+      *Settings → Extensions → Python environment*.
+    - *Extensions → Add → Extension type: Python →* select
+      `burp_extension/llm_analyser.py`.
+    - Confirm `ARGUS_TOKEN` is exported in the shell you launched Burp
+      from, or create `burp_extension/argus_config.json`:
+
+      ```json
+      {"bridge_url": "http://127.0.0.1:8765/analyse",
+       "auth_token": "your-long-random-string"}
+      ```
 
 7. Verify the pipeline:
 
-   ```bash
-   curl -s http://127.0.0.1:8765/health | python3 -m json.tool
-   curl -s -H "X-Argus-Token: $ARGUS_TOKEN" \
-        http://127.0.0.1:8765/state | python3 -m json.tool | head -40
-   ```
+    ```bash
+    curl -s http://127.0.0.1:8765/health | python -m json.tool
+    curl -s -H "X-Argus-Token: $ARGUS_TOKEN" \
+         http://127.0.0.1:8765/state | python -m json.tool | head -40
+    ```
 
-## Setup — Docker
+For a step-by-step first-run guide, see [USAGE.md](USAGE.md) and
+[TEST_LOCAL.md](TEST_LOCAL.md).
+
+## Docker
 
 ```bash
 docker compose up --build
 # Bridge:    http://127.0.0.1:8765
 # Dashboard: http://127.0.0.1:8501
-# Ollama:    http://127.0.0.1:11434 (run `docker exec argus-ollama ollama pull mistral`)
+# Ollama:    http://127.0.0.1:11434 (run: docker exec argus-ollama ollama pull mistral)
 ```
 
-Every service is bound to 127.0.0.1 on the host; the compose network is
+Every service binds to `127.0.0.1` on the host; the compose network is
 how they reach each other.
 
 ## Recommended models
 
-| Model          | Size  | Best for                              | Min RAM |
-|----------------|-------|---------------------------------------|---------|
-| Mistral 7B     | 4GB   | Fast general triage, good JSON output | 8GB     |
-| LLaMA 3 8B     | 5GB   | Stronger reasoning, recommended start | 8GB     |
-| LLaMA 3 70B    | 40GB  | Highest quality, report writing       | 48GB    |
-| CodeLlama 34B  | 20GB  | Code-level vulns: SSTI, deserialise   | 24GB    |
-| Phi-3 Mini     | 2GB   | High-volume triage, critique pass     | 4GB     |
-| Mixtral 8x7B   | 26GB  | Balanced breadth + depth              | 32GB    |
+| Model         | Size | Best for                              | Min RAM |
+| ------------- | ---- | ------------------------------------- | ------- |
+| Mistral 7B    | 4GB  | Fast general triage, good JSON output | 8GB     |
+| LLaMA 3 8B    | 5GB  | Stronger reasoning, recommended start | 8GB     |
+| LLaMA 3 70B   | 40GB | Highest quality, report writing       | 48GB    |
+| CodeLlama 34B | 20GB | Code-level vulns: SSTI, deserialise   | 24GB    |
+| Phi-3 Mini    | 2GB  | High-volume triage, critique pass     | 4GB     |
+| Mixtral 8x7B  | 26GB | Balanced breadth + depth              | 32GB    |
 
-Switch models via `config.yaml` (`model:`) or enable the multi-model router
-under `router:` to route per vulnerability class.
+Switch models via `config.yaml` (`model:`) or enable the multi-model
+router under `router:` to route per vulnerability class.
 
 ## Endpoints
 
-| Method | Path                  | Purpose                                        |
-|--------|-----------------------|------------------------------------------------|
-| POST   | `/analyse`            | Triage one request/response pair               |
-| POST   | `/diff`               | Differential analysis of two samples           |
-| POST   | `/poc`                | Generate a curl/httpie/python PoC by finding   |
-| POST   | `/probe`              | Agentic follow-up probes (opt-in)              |
-| GET    | `/findings`           | List findings in the current session           |
-| GET    | `/findings/summary`   | Per-risk / per-OWASP counts                    |
-| GET    | `/state`              | Health + summary + findings + metrics (one go) |
-| GET    | `/metrics`            | Prometheus exposition                          |
-| POST   | `/session/clear`      | Archive current session and start a fresh one  |
-| GET    | `/session/report`     | Markdown engagement report                     |
-| GET    | `/health`             | Liveness                                       |
+| Method | Path                | Purpose                                        |
+| ------ | ------------------- | ---------------------------------------------- |
+| POST   | `/analyse`          | Triage one request/response pair               |
+| POST   | `/diff`             | Differential analysis of two samples           |
+| POST   | `/poc`              | Generate a curl / httpie / python PoC          |
+| POST   | `/probe`            | Agentic follow-up probes (opt-in)              |
+| POST   | `/confirm`          | Closed-loop confirmation of a finding          |
+| POST   | `/correlate`        | Business-logic bugs spanning existing findings |
+| POST   | `/recommend`        | Ranked payload recommendations                 |
+| GET    | `/findings`         | List findings in the current session           |
+| GET    | `/findings/summary` | Per-risk / per-OWASP counts                    |
+| GET    | `/chains`           | Cross-request chain findings                   |
+| GET    | `/state`            | Health + summary + findings + metrics          |
+| GET    | `/metrics`          | Prometheus exposition                          |
+| POST   | `/session/clear`    | Archive current session and start a fresh one  |
+| GET    | `/session/report`   | Markdown engagement report                     |
+| GET    | `/session/sarif`    | SARIF 2.1.0 export                             |
+| GET    | `/health`           | Liveness                                       |
 
 All endpoints except `/health` require the `X-Argus-Token` header when
-`auth.enabled` is true.
+`auth.enabled` is `true`.
+
+## Safety and authorisation
+
+Argus is a pentest tool. Two config switches gate any active behaviour:
+
+- `agentic.enabled` (default: `false`) — allows follow-up HTTP probes.
+- `recommender.intrusive` (default: `false`) — allows intrusive payloads
+  in `/recommend` output.
+
+Both default to off. Only enable them for targets you are explicitly
+authorised to test. `MIT License` grants you the right to use the code,
+not permission to attack anyone's systems.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and detector
+contributions are especially welcome. For security issues in Argus
+itself, see [SECURITY.md](SECURITY.md).
 
 ## License
 

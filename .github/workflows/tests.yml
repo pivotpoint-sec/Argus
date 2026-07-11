@@ -1,0 +1,52 @@
+﻿name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install runtime + test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn httpx "pydantic>=2" sqlmodel PyYAML
+          pip install pytest pytest-asyncio
+
+      - name: Syntax check every Python file
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          bad = []
+          for p in pathlib.Path(".").rglob("*.py"):
+              if any(x in p.parts for x in (".venv", "venv", "__pycache__", ".git")):
+                  continue
+              try:
+                  ast.parse(p.read_text(encoding="utf-8"))
+              except SyntaxError as e:
+                  bad.append((str(p), e))
+          if bad:
+              for f, e in bad:
+                  print(f"FAIL {f}: {e}")
+              sys.exit(1)
+          print("all files parse cleanly")
+          PY
+
+      - name: Run pytest
+        run: pytest -q

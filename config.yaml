@@ -18,7 +18,7 @@ max_request_body_bytes: 2097152      # 2 MiB inbound cap at the FastAPI layer
 # Leave empty to disable (NOT recommended on multi-user machines).
 auth:
   enabled: true
-  token: change-me-before-first-run #CHANGE-ME-BEFORE-RUN
+  token: change-me-before-first-run
 
 # ---- Throttling & truncation ------------------------------------------------
 rate_limit_per_minute: 10            # token-bucket protection for the local model
@@ -76,7 +76,10 @@ memory:
   top_k_context: 5
   dedup_distance: 0.12
 
-# ---- Agentic probe (opt-in) -------------------------------------------------
+# ---- Agentic probe (opt-in, DEFAULT OFF) ------------------------------------
+# When enabled, the bridge can issue follow-up HTTP requests (GET/HEAD/OPTIONS,
+# same-origin only, hard budgets) to confirm or expand findings. This is a
+# form of active testing. Only enable for targets you are authorised to test.
 agentic:
   enabled: false
   max_probes_per_finding: 3
@@ -87,8 +90,8 @@ agentic:
 # (quote probes, canaries, {{7*7}}, localhost SSRF, etc.).
 # When true, also surfaces INTRUSIVE payloads (UNION extraction, web-shell
 # upload, billion-laughs XXE, deserialization gadget chains, etc.).
-# Same gate as agentic.enabled - only flip on for targets you are
-# authorised to actively exploit.
+# DEFAULT OFF - only flip on for targets you are explicitly authorised to
+# actively exploit. Same authorisation bar as agentic.enabled.
 recommender:
   intrusive: false
 
