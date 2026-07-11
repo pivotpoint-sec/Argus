@@ -19,6 +19,7 @@ cd /c/Users/[PROFILE_NAME]/[ARGUS_DIRECTORY]
 ### A.1 Create a venv and install
 
 ```bash
+# Requires Python 3.11, 3.12, or 3.13 (not 3.14 -- chromadb/tokenizers has no cp314 wheels)
 python3 -m venv .venv
 source .venv/bin/activate              # PowerShell: .venv\Scripts\Activate.ps1
 pip install -U pip
@@ -26,7 +27,7 @@ pip install -r requirements.txt
 ```
 
 Expect pip to resolve `fastapi`, `uvicorn`, `httpx`, `pydantic`, `sqlmodel`,
-`chromadb`, `sentence-transformers`, `PyYAML`, `streamlit`, `pandas`,
+`chromadb`, `fastembed`, `PyYAML`, `streamlit`, `pandas`,
 `pytest`, `pytest-asyncio`.
 
 ### A.2 Syntax sweep
@@ -98,9 +99,12 @@ class _Cl:
 cd=types.ModuleType("chromadb"); cd.PersistentClient=lambda *a,**kw:_Cl()
 cc=types.ModuleType("chromadb.config"); cc.Settings=lambda **kw:None
 sys.modules["chromadb"]=cd; sys.modules["chromadb.config"]=cc
-st=types.ModuleType("sentence_transformers")
-st.SentenceTransformer=lambda *a,**kw: types.SimpleNamespace(encode=lambda t,**kk:[[0.0]*8 for _ in t])
-sys.modules["sentence_transformers"]=st
+fe=types.ModuleType("fastembed")
+class _StubTE:
+    def __init__(s,*a,**kw): pass
+    def embed(s, texts, **kw): return iter([[0.0]*8 for _ in list(texts)])
+fe.TextEmbedding=_StubTE
+sys.modules["fastembed"]=fe
 
 import llm_bridge; llm_bridge.PROJECT_ROOT = root/"argus"
 from llm_bridge import analyser

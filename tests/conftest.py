@@ -81,11 +81,17 @@ def _isolate(tmp_path, monkeypatch):
     sys.modules["chromadb"] = chromadb
     sys.modules["chromadb.config"] = cfg
 
-    sent = types.ModuleType("sentence_transformers")
-    sent.SentenceTransformer = lambda *a, **kw: types.SimpleNamespace(
-        encode=lambda texts, **kk: [[0.0] * 8 for _ in texts]
-    )
-    sys.modules["sentence_transformers"] = sent
+    fe = types.ModuleType("fastembed")
+
+    class _StubTextEmbedding:
+        def __init__(self, *a, **kw):
+            pass
+
+        def embed(self, texts, **kw):
+            return iter([[0.0] * 8 for _ in list(texts)])
+
+    fe.TextEmbedding = _StubTextEmbedding
+    sys.modules["fastembed"] = fe
 
     # Point llm_bridge.PROJECT_ROOT at tmp_path via monkeypatch on import.
     import llm_bridge

@@ -6,6 +6,10 @@ has already been found in this engagement so it can (a) correlate new
 signals with old ones, (b) avoid re-raising duplicate findings (clustering),
 and (c) surface follow-up opportunities that span multiple requests.
 Nothing here ever leaves the machine.
+
+Embeddings are generated via fastembed (ONNX runtime) instead of
+sentence-transformers + torch. Same MiniLM model, ~800 MB smaller
+install footprint, no CUDA wheels ever pulled.
 """
 from __future__ import annotations
 
@@ -27,13 +31,39 @@ def _get_embedder():
     global _embedder
     with _lock:
         if _embedder is None:
-            from sentence_transformers import SentenceTransformer
+            from fastembed import TextEmbedding
 
             cfg = load_config()
-            name = cfg.get("memory", {}).get("embedding_model", "all-MiniLM-L6-v2")
-            _log.info("Loading local embedding model: %s", name)
-            _embedder = SentenceTransformer(name)
+            name = cfg.get("memory", {}).get(
+                "embedding_model",
+                "sentence-transformers/all-MiniLM-L6-v2",
+            )
+            cache_dir = cfg.get("memory", {}).get("embedding_cache_dir")
+            _log.info("Loading local ONNX embedding model: %s", name)
+            kwargs: dict[str, Any] = {"model_name": name}
+            if cache_dir:
+                kwargs["cache_dir"] = str(resolve_path(cache_dir))
+            _embedder = TextEmbedding(**kwargs)
     return _embedder
+
+
+def _embed(texts):
+    """
+    Return L2-normalised embeddings so cosine == dot product downstream.
+    fastembed returns raw vectors (unlike sentence-transformers with
+    normalize_embeddings=True), so we normalise here.
+    """
+    import numpy as np
+
+    vecs = list(_get_embedder().embed(list(texts)))
+    out = []
+    for v in vecs:
+        arr = np.asarray(v, dtype=float)
+        n = float(np.linalg.norm(arr))
+        if n > 0:
+            arr = arr / n
+        out.append([float(x) for x in arr])
+    return out
 
 
 def _get_collection():
@@ -56,11 +86,6 @@ def _get_collection():
             )
             _log.info("ChromaDB ready at %s", persist)
     return _collection
-
-
-def _embed(texts):
-    emb = _get_embedder().encode(texts, normalize_embeddings=True)
-    return [list(map(float, v)) for v in emb]
 
 
 def add_finding(*, url, parameter, finding_type, detail, embedding_text, session_id):
@@ -91,18 +116,13 @@ def add_finding(*, url, parameter, finding_type, detail, embedding_text, session
 
 
 def _enforce_cap(*, session_id, cap, evict):
-    """FIFO eviction so a long session can't OOM ChromaDB."""
     try:
         collection = _get_collection()
-        # Cheap count: pull a single ID query and read the total via count() if
-        # the backend supports it. Chroma's count() is per-collection (not
-        # per-session), so we use a session filter via get().
         res = collection.get(where={"session_id": session_id}, limit=cap + 1)
         ids = res.get("ids") or []
         if len(ids) <= cap:
             return
         metas = res.get("metadatas") or []
-        # Sort by added_at (oldest first); fall back to insertion order.
         paired = list(zip(ids, metas))
         try:
             paired.sort(key=lambda p: (p[1] or {}).get("added_at", 0))

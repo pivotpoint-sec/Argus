@@ -4,7 +4,7 @@
 # =============================================================================
 
 # ---- Model & Ollama ---------------------------------------------------------
-model: mistral                       # default model; router may override per-request
+model: phi3
 ollama_url: http://localhost:11434
 ollama_keep_alive: 30m               # keeps weights resident between calls
 
@@ -72,7 +72,7 @@ critique:
 memory:
   enabled: true
   persist_dir: storage/chroma
-  embedding_model: all-MiniLM-L6-v2
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
   top_k_context: 5
   dedup_distance: 0.12
 
@@ -112,3 +112,4 @@ storage:
 report:
   include_archived: false
   model: ""                          # blank => reuse main model
+

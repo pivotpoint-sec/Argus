@@ -11,8 +11,9 @@ pydantic>=2.6,<3
 sqlmodel>=0.0.16,<0.1
 chromadb>=0.4.24,<0.6
 
-# Embeddings (local, no external calls)
-sentence-transformers>=2.7,<3
+# Embeddings (local, ONNX-based - ~800 MB smaller than sentence-transformers,
+# no torch, no CUDA wheels).
+fastembed>=0.4,<1
 
 # Config + logs
 PyYAML>=6.0,<7
