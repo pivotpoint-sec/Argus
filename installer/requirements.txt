@@ -1,0 +1,26 @@
+# Argus - local LLM pentest pipeline
+# Python 3.11+. Pinned to known-good majors; tighten with pip-compile if desired.
+
+# HTTP / API
+fastapi>=0.110,<0.116
+uvicorn[standard]>=0.27,<0.32
+httpx>=0.27,<0.29
+pydantic>=2.6,<3
+
+# Storage
+sqlmodel>=0.0.16,<0.1
+chromadb>=0.4.24,<0.6
+
+# Embeddings (local, no external calls)
+sentence-transformers>=2.7,<3
+
+# Config + logs
+PyYAML>=6.0,<7
+
+# Dashboard
+streamlit>=1.32,<2
+pandas>=2.2,<3
+
+# Dev / tests
+pytest>=8,<9
+pytest-asyncio>=0.23,<0.26

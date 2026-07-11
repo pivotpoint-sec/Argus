@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Argus runtime state (NEVER commit these - they contain engagement data)
+storage/findings.db
+storage/findings.db-journal
+storage/findings.db-wal
+storage/findings.db-shm
+storage/llm_cache.db
+storage/llm_cache.db-journal
+storage/llm_cache.db-wal
+storage/llm_cache.db-shm
+storage/chroma/
+logs/
+
+# Operator-specific config that carries the auth token
+burp_extension/argus_config.json
+*.local.yaml
+
+# Generated artefacts
+engagement*.md
+*.sarif
+argus_reports/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# Build / packaging
+build/
+dist/
+*.egg
+
+# Anything Streamlit drops
+.streamlit/secrets.toml
+
+# Personal / off-repo materials (job apps, interview prep, CV)
+Samuel*
+*Interview Prep*
+*.docx
+
+# Leftover test artefacts
+_bashtest.txt
+
+# Internal strategy / commercial planning - not for public repo
+COMMERCIALISATION.md

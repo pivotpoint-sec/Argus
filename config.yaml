@@ -1,0 +1,111 @@
+# =============================================================================
+# Argus - Local LLM-assisted Web Application Pentesting Pipeline
+# Configuration file. ALL runtime knobs live here. No hardcoded values.
+# =============================================================================
+
+# ---- Model & Ollama ---------------------------------------------------------
+model: mistral                       # default model; router may override per-request
+ollama_url: http://localhost:11434
+ollama_keep_alive: 30m               # keeps weights resident between calls
+
+# ---- Bridge (FastAPI) -------------------------------------------------------
+bridge_host: 127.0.0.1
+bridge_port: 8765
+max_request_body_bytes: 2097152      # 2 MiB inbound cap at the FastAPI layer
+
+# ---- Authentication ---------------------------------------------------------
+# The Burp extension and dashboard must send X-Argus-Token with this value.
+# Leave empty to disable (NOT recommended on multi-user machines).
+auth:
+  enabled: true
+  token: change-me-before-first-run #CHANGE-ME-BEFORE-RUN
+
+# ---- Throttling & truncation ------------------------------------------------
+rate_limit_per_minute: 10            # token-bucket protection for the local model
+max_request_chars: 3000              # truncate request before sending to LLM
+max_response_chars: 3000             # truncate response before sending to LLM
+ollama_timeout_seconds: 120          # per-attempt timeout for the model call
+ollama_retry_attempts: 3             # exponential backoff retries
+
+# ---- Logging ----------------------------------------------------------------
+log_level: INFO                      # DEBUG | INFO | WARNING | ERROR
+log_file: logs/argus.log
+log_max_bytes: 5242880               # 5 MB per rotation
+log_backups: 5
+log_json: true                       # structured JSON lines (grep/jq friendly)
+
+# ---- Pre-filter -------------------------------------------------------------
+filter:
+  enabled: true
+  min_response_size: 0               # bytes; reject responses smaller than this
+  max_response_size: 102400          # 100 KiB; drop huge binary responses
+  skip_extensions: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2", ".ttf", ".ico", ".css", ".js", ".map", ".svg"]
+  skip_paths: ["/health", "/favicon.ico", "/assets/", "/static/", "/img/", "/fonts/"]
+
+# ---- Deterministic detectors ------------------------------------------------
+detectors:
+  enabled: true
+
+# ---- LLM response cache -----------------------------------------------------
+cache:
+  enabled: true
+  sqlite_path: storage/llm_cache.db
+  ttl_seconds: 86400                 # 24h
+  max_rows: 5000
+
+# ---- Multi-model router -----------------------------------------------------
+router:
+  enabled: false
+  auth: mistral
+  sqli: mistral
+  xss:  mistral
+  ssti: codellama
+  code: codellama
+
+# ---- Self-critique pass -----------------------------------------------------
+critique:
+  enabled: true
+  model: ""                          # blank => reuse main model
+  min_risk: medium                   # only critique medium+ findings
+
+# ---- Session memory (ChromaDB) ---------------------------------------------
+memory:
+  enabled: true
+  persist_dir: storage/chroma
+  embedding_model: all-MiniLM-L6-v2
+  top_k_context: 5
+  dedup_distance: 0.12
+
+# ---- Agentic probe (opt-in) -------------------------------------------------
+agentic:
+  enabled: true
+  max_probes_per_finding: 3
+  session_budget: 20
+
+# ---- Payload recommender (POST /recommend) ----------------------------------
+# When false, /recommend only suggests BENIGN confirmation payloads
+# (quote probes, canaries, {{7*7}}, localhost SSRF, etc.).
+# When true, also surfaces INTRUSIVE payloads (UNION extraction, web-shell
+# upload, billion-laughs XXE, deserialization gadget chains, etc.).
+# Same gate as agentic.enabled - only flip on for targets you are
+# authorised to actively exploit.
+recommender:
+  intrusive: true
+
+# ---- LLM self-consistency (opt-in) ------------------------------------------
+# When runs > 1, every analyse() call runs N times and only findings that
+# appear in at least min_agreement runs survive. Cuts hallucinations at
+# N x compute cost. Leave at 1 for normal use.
+consistency:
+  runs: 1
+  # min_agreement defaults to majority ((runs // 2) + 1). Override if needed.
+  # min_agreement: 2
+
+# ---- Storage ----------------------------------------------------------------
+storage:
+  sqlite_path: storage/findings.db
+
+# ---- Reporting --------------------------------------------------------------
+report:
+  include_archived: false
+  model: ""                          # blank => reuse main model
