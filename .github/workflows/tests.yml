@@ -1,4 +1,4 @@
-﻿name: tests
+name: tests
 
 on:
   push:
@@ -23,11 +23,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install runtime + test dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install fastapi uvicorn httpx "pydantic>=2" sqlmodel PyYAML
-          pip install pytest pytest-asyncio
+          pip install -r requirements.txt
 
       - name: Syntax check every Python file
         run: |
