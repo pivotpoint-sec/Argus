@@ -13,7 +13,7 @@ dashboard for live triage and Markdown reporting.
 no telemetry. Every component binds to `127.0.0.1`. The bridge enforces a
 shared-secret bearer token so other local processes cannot poison findings.
 
-## What's new in v1.1
+## What's Argus Is.
 
 - **Deterministic detector tier** — JWTs, cloud/API keys, stack traces,
   missing/weak security headers, private-IP leakage. These run in
