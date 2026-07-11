@@ -1,0 +1,46 @@
+# -----------------------------------------------------------------------------
+# One-command local stack: Ollama + Argus bridge + Streamlit dashboard.
+#
+# Security: every service binds ONLY to 127.0.0.1 on the host. The internal
+# compose network is how they talk to each other. Nothing is published to
+# the LAN.
+# -----------------------------------------------------------------------------
+version: "3.9"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: argus-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+
+  bridge:
+    build: .
+    image: argus:latest
+    container_name: argus-bridge
+    depends_on: [ollama]
+    environment:
+      # The bridge reads config.yaml; override the ollama URL here so it
+      # reaches the sibling container.
+      OLLAMA_URL: http://ollama:11434
+    volumes:
+      - ./:/app
+    ports:
+      - "127.0.0.1:8765:8765"
+    command: ["uvicorn", "llm_bridge.bridge:app", "--host", "0.0.0.0", "--port", "8765"]
+
+  dashboard:
+    image: argus:latest
+    container_name: argus-dashboard
+    depends_on: [bridge]
+    volumes:
+      - ./:/app
+    ports:
+      - "127.0.0.1:8501:8501"
+    command: ["streamlit", "run", "dashboard/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+
+volumes:
+  ollama:
