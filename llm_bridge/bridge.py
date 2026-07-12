@@ -36,7 +36,7 @@ from .analyser import (
     start_ollama_reconnect_poller,
 )
 from .auth import verify_token
-from .config import configure_logging, load_config
+from .config import configure_logging, load_config, validate_startup_config
 from .models import (
     AnalyseRequest,
     AnalysisResult,
@@ -85,6 +85,10 @@ def _banner():
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # Fail fast if auth is enforced but the token is missing / weak / default.
+    # Runs before the banner so failures show a clear error rather than partial
+    # startup output.
+    validate_startup_config(load_config())
     _banner()
     # Background ping so the bridge keeps pre-filtering and re-attaches
     # automatically when Ollama comes back up after a restart.

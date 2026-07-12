@@ -5,12 +5,23 @@ Security intent: ALL tuneables (model name, endpoints, rate limits, truncation
 thresholds, filter rules, auth token) must come from config.yaml. Nothing is
 hard-coded so operators can audit the settings of their local engagement
 from a single file. Structured JSON logs make offline forensics trivial.
+
+Environment overlay: after loading YAML, a small set of env vars can override
+individual keys (see _ENV_OVERLAY). This is what makes the Docker compose
+story work (bridge inside a container needs ollama_url pointing at the sibling
+container, not localhost) and lets operators keep secrets out of the tracked
+config.yaml by exporting ARGUS_TOKEN instead of editing the file.
+
+Startup guard: validate_startup_config() refuses to run when auth is enforced
+but the token is empty, still on the installer placeholder, or under 16 chars.
+Called from bridge.py's lifespan before anything else.
 """
 from __future__ import annotations
 
 import json
 import logging
 import logging.handlers
+import os
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -23,9 +34,66 @@ from . import PROJECT_ROOT
 CONFIG_PATH: Path = PROJECT_ROOT / "config.yaml"
 
 
+# ---------------------------------------------------------------------------
+# Environment overlay
+# ---------------------------------------------------------------------------
+
+# Mapping: env var name -> dotted path into the config dict.
+# Any env var present here (and set to a non-empty string) overrides the
+# corresponding YAML value. Keys ending in "_port" are coerced to int.
+_ENV_OVERLAY: dict[str, tuple[str, ...]] = {
+    "OLLAMA_URL":        ("ollama_url",),
+    "OLLAMA_KEEP_ALIVE": ("ollama_keep_alive",),
+    "ARGUS_MODEL":       ("model",),
+    "ARGUS_TOKEN":       ("auth", "token"),
+    "BRIDGE_HOST":       ("bridge_host",),
+    "BRIDGE_PORT":       ("bridge_port",),
+    "LOG_LEVEL":         ("log_level",),
+}
+
+
+def _apply_env_overlay(cfg: dict[str, Any]) -> None:
+    """Overlay env vars from _ENV_OVERLAY onto cfg (mutates in place)."""
+    for env_var, path in _ENV_OVERLAY.items():
+        raw = os.environ.get(env_var)
+        if raw is None or raw == "":
+            # Treat unset AND empty as "no override" so an accidentally-empty
+            # env var can't clear a real config value.
+            continue
+
+        value: Any = raw
+        # Coerce known integer keys.
+        if path[-1].endswith("_port"):
+            try:
+                value = int(raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"env var {env_var}={raw!r} must be an integer"
+                ) from exc
+
+        # Walk into nested dicts, creating them as needed.
+        d: Any = cfg
+        for key in path[:-1]:
+            existing = d.get(key)
+            if existing is None:
+                d[key] = {}
+            elif not isinstance(existing, dict):
+                raise ValueError(
+                    f"env overlay path {'.'.join(path)} collides with "
+                    f"non-dict value in config.yaml"
+                )
+            d = d[key]
+        d[path[-1]] = value
+
+
+# ---------------------------------------------------------------------------
+# Loader
+# ---------------------------------------------------------------------------
+
+
 @lru_cache(maxsize=1)
 def load_config() -> dict[str, Any]:
-    """Load and cache config.yaml. Fails loudly if the file is missing."""
+    """Load config.yaml and overlay env vars. Cached for the process lifetime."""
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(
             f"config.yaml not found at {CONFIG_PATH}. "
@@ -35,6 +103,7 @@ def load_config() -> dict[str, Any]:
         data = yaml.safe_load(fh) or {}
     if not isinstance(data, dict):
         raise ValueError("config.yaml must contain a mapping at the top level")
+    _apply_env_overlay(data)
     return data
 
 
@@ -48,12 +117,51 @@ def resolve_path(relative: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Startup validation
+# ---------------------------------------------------------------------------
+
+
+PLACEHOLDER_TOKEN = "change-me-before-first-run"
+MIN_TOKEN_LEN = 16
+
+
+def validate_startup_config(cfg: dict[str, Any]) -> None:
+    """
+    Refuse to start if auth is enforced but the token is missing / default / weak.
+    Raises SystemExit with a helpful message on failure. Safe to call multiple
+    times; called from bridge.py's lifespan before the banner.
+    """
+    auth = cfg.get("auth", {}) or {}
+    if not auth.get("enabled", True):
+        return
+    token = str(auth.get("token") or "")
+    if not token:
+        raise SystemExit(
+            "Argus refuses to start: auth.enabled=true but no token is set. "
+            "Set ARGUS_TOKEN in the environment, or auth.token in config.yaml. "
+            "To disable auth entirely, set auth.enabled=false."
+        )
+    if token == PLACEHOLDER_TOKEN:
+        raise SystemExit(
+            "Argus refuses to start: auth.token still holds the installer "
+            f"placeholder '{PLACEHOLDER_TOKEN}'. Run installer/install.sh to "
+            "generate a fresh token, or set ARGUS_TOKEN in the environment."
+        )
+    if len(token) < MIN_TOKEN_LEN:
+        raise SystemExit(
+            f"Argus refuses to start: auth.token is only {len(token)} chars; "
+            f"at least {MIN_TOKEN_LEN} required. Generate with: "
+            "python -c 'import secrets; print(secrets.token_urlsafe(24))'"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
 
 class _JsonFormatter(logging.Formatter):
-    """Minimal structured formatter — one JSON object per line."""
+    """Minimal structured formatter - one JSON object per line."""
 
     def format(self, record: logging.LogRecord) -> str:  # noqa: D401
         payload = {

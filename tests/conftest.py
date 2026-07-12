@@ -1,5 +1,5 @@
 """
-pytest fixtures — isolate each test run from the operator's real data.
+pytest fixtures - isolate each test run from the operator's real data.
 
 Every test gets a fresh temp workspace with its own copy of config.yaml,
 its own SQLite file, and its own (stubbed) ChromaDB so nothing pollutes
@@ -15,6 +15,7 @@ import types
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,6 +27,15 @@ def _isolate(tmp_path, monkeypatch):
     shutil.copy(ROOT / "config.yaml", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(exist_ok=True)
     (tmp_path / "storage").mkdir(exist_ok=True)
+
+    # Replace the shipped placeholder token with a valid one. Otherwise
+    # validate_startup_config() refuses to start (correctly - the placeholder
+    # is a footgun in production), but that would break every test that
+    # exercises the lifespan via `with TestClient(app):`.
+    cfg_path = tmp_path / "config.yaml"
+    _cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    _cfg.setdefault("auth", {})["token"] = "test-token-longer-than-16-chars"
+    cfg_path.write_text(yaml.safe_dump(_cfg, sort_keys=False))
 
     # Make `llm_bridge` importable from its real source while overriding
     # its PROJECT_ROOT to point at the tmp workspace.
@@ -46,7 +56,7 @@ def _isolate(tmp_path, monkeypatch):
     except Exception:
         pass
 
-    # Stub chromadb + sentence_transformers so tests don't need real models.
+    # Stub chromadb + fastembed so tests don't need real models.
     class _NoopColl:
         def __init__(self):
             self._rows = []
@@ -60,7 +70,7 @@ def _isolate(tmp_path, monkeypatch):
                 "ids": [[r[0] for r in hits]],
                 "documents": [[""] * len(hits)],
                 "metadatas": [[r[1] for r in hits]],
-                "distances": [[0.0] * len(hits)],  # always "identical" — exercises dedup
+                "distances": [[0.0] * len(hits)],  # always "identical" - exercises dedup
             }
         def count(self): return len(self._rows)
         def delete(self, where=None):
