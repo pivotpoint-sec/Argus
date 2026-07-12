@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# argus - one-command lifecycle for the Argus pipeline
+#
+# Usage:
+#   argus start          Start ollama, bridge, dashboard (idempotent)
+#   argus stop           Stop bridge, dashboard, and any ollama we started
+#   argus restart        stop && start
+#   argus status         Show running state
+#   argus logs [name]    Tail logs (default: bridge; also: ollama, dashboard)
+#   argus smoke          POST a synthetic SQLi sample to /analyse
+#   argus token          Print the auth token from config.yaml
+#
+# State lives under $REPO/.run/ (pids + logs).
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+# Resolve REPO as the parent of the directory containing this script,
+# following any symlinks so `argus` can be linked into /usr/local/bin.
+_self="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO="$(cd "$(dirname "$_self")/.." && pwd)"
+VENV="$REPO/.venv"
+RUN="$REPO/.run"
+CONFIG="$REPO/config.yaml"
+
+mkdir -p "$RUN"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+die() { echo "argus: $*" >&2; exit 1; }
+log() { echo "[argus] $*"; }
+
+need_venv() {
+    [[ -x "$VENV/bin/python" ]] \
+        || die "no venv at $VENV - run installer/install.sh first"
+}
+
+need_config() {
+    [[ -f "$CONFIG" ]] || die "no config.yaml at $CONFIG"
+}
+
+load_token() {
+    need_venv
+    need_config
+    ARGUS_TOKEN="$("$VENV/bin/python" -c "
+import sys, yaml
+try:
+    print(yaml.safe_load(open('$CONFIG'))['auth']['token'])
+except Exception as e:
+    sys.exit(f'cannot read auth.token from config.yaml: {e}')
+")"
+    if [[ -z "$ARGUS_TOKEN" || "$ARGUS_TOKEN" == "change-me-before-first-run" ]]; then
+        die "config.yaml has no real token - re-run installer/install.sh"
+    fi
+    export ARGUS_TOKEN
+}
+
+# Returns 0 and prints pid if $1 is running; returns non-zero otherwise.
+pid_of() {
+    local name="$1"
+    local pidfile="$RUN/$name.pid"
+    [[ -f "$pidfile" ]] || return 1
+    local pid
+    pid="$(cat "$pidfile")"
+    kill -0 "$pid" 2>/dev/null || return 1
+    echo "$pid"
+}
+
+# ---------------------------------------------------------------------------
+# start
+# ---------------------------------------------------------------------------
+
+start_ollama() {
+    # If ollama is already running system-wide (systemd unit, etc.), leave it.
+    if pgrep -x ollama >/dev/null 2>&1 && ! pid_of ollama >/dev/null; then
+        log "ollama: already running (external)"
+        return
+    fi
+    if pid_of ollama >/dev/null; then
+        log "ollama: already running (pid $(pid_of ollama))"
+        return
+    fi
+    command -v ollama >/dev/null \
+        || die "ollama not installed - see https://ollama.com/download"
+    nohup ollama serve >"$RUN/ollama.log" 2>&1 &
+    echo $! >"$RUN/ollama.pid"
+    sleep 2
+    if pid_of ollama >/dev/null; then
+        log "ollama: started (pid $(pid_of ollama))"
+    else
+        die "ollama failed to start - check $RUN/ollama.log"
+    fi
+}
+
+start_bridge() {
+    if pid_of bridge >/dev/null; then
+        log "bridge: already running (pid $(pid_of bridge))"
+        return
+    fi
+    need_venv
+    need_config
+    (
+        cd "$REPO"
+        nohup "$VENV/bin/python" -m llm_bridge.bridge \
+            >"$RUN/bridge.log" 2>&1 &
+        echo $! >"$RUN/bridge.pid"
+    )
+    sleep 2
+    if pid_of bridge >/dev/null; then
+        log "bridge: started (pid $(pid_of bridge)) - http://127.0.0.1:8765"
+    else
+        die "bridge failed to start - check $RUN/bridge.log"
+    fi
+}
+
+start_dashboard() {
+    if pid_of dashboard >/dev/null; then
+        log "dashboard: already running (pid $(pid_of dashboard))"
+        return
+    fi
+    need_venv
+    load_token
+    (
+        cd "$REPO"
+        ARGUS_TOKEN="$ARGUS_TOKEN" nohup "$VENV/bin/streamlit" \
+            run dashboard/app.py \
+            --server.headless=true \
+            --browser.gatherUsageStats=false \
+            >"$RUN/dashboard.log" 2>&1 &
+        echo $! >"$RUN/dashboard.pid"
+    )
+    sleep 2
+    if pid_of dashboard >/dev/null; then
+        log "dashboard: started (pid $(pid_of dashboard)) - http://127.0.0.1:8501"
+    else
+        die "dashboard failed to start - check $RUN/dashboard.log"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# stop
+# ---------------------------------------------------------------------------
+
+stop_service() {
+    local name="$1"
+    local pid
+    if pid="$(pid_of "$name")"; then
+        kill "$pid" 2>/dev/null || true
+        # Give it 3s to exit cleanly, then SIGKILL.
+        for _ in 1 2 3; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "$pid" 2>/dev/null || true
+        rm -f "$RUN/$name.pid"
+        log "$name: stopped"
+    else
+        rm -f "$RUN/$name.pid"
+        log "$name: not running"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+status_service() {
+    local name="$1" url="${2:-}"
+    local pid
+    if pid="$(pid_of "$name")"; then
+        printf "  %-10s running  pid=%-7s%s\n" "$name" "$pid" "${url:+  $url}"
+    else
+        printf "  %-10s stopped\n" "$name"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# dispatcher
+# ---------------------------------------------------------------------------
+
+cmd="${1:-}"
+case "$cmd" in
+    start)
+        start_ollama
+        start_bridge
+        start_dashboard
+        echo
+        log "up.  dashboard: http://127.0.0.1:8501   bridge: http://127.0.0.1:8765"
+        log "logs: argus logs [ollama|bridge|dashboard]   smoke test: argus smoke"
+        ;;
+    stop)
+        stop_service dashboard
+        stop_service bridge
+        # Only stop ollama if WE started it; leave external instances alone.
+        if [[ -f "$RUN/ollama.pid" ]]; then
+            stop_service ollama
+        fi
+        ;;
+    restart)
+        "$0" stop
+        "$0" start
+        ;;
+    status)
+        echo "argus services:"
+        status_service ollama    "http://127.0.0.1:11434"
+        status_service bridge    "http://127.0.0.1:8765"
+        status_service dashboard "http://127.0.0.1:8501"
+        ;;
+    logs)
+        which_svc="${2:-bridge}"
+        logfile="$RUN/$which_svc.log"
+        [[ -f "$logfile" ]] || die "no log for '$which_svc' at $logfile"
+        tail -f "$logfile"
+        ;;
+    smoke)
+        load_token
+        pid_of bridge >/dev/null || die "bridge not running - argus start"
+        curl -s -X POST http://127.0.0.1:8765/analyse \
+            -H "Content-Type: application/json" \
+            -H "X-Argus-Token: $ARGUS_TOKEN" \
+            -d '{"url":"https://target/api/users/1?id=1 OR 1=1",
+                 "tool":"manual","method":"GET","status_code":200,
+                 "request":"GET /api/users/1?id=1 OR 1=1 HTTP/1.1\nHost: target\n\n",
+                 "response":"HTTP/1.1 200 OK\n\n{\"ok\":true}"}' \
+            | python3 -m json.tool
+        ;;
+    token)
+        load_token
+        echo "$ARGUS_TOKEN"
+        ;;
+    ""|-h|--help|help)
+        cat <<EOF
+argus - one-command lifecycle for the Argus pipeline
+
+usage: argus {start | stop | restart | status | logs [name] | smoke | token}
+
+  start          Start ollama, bridge, dashboard (idempotent)
+  stop           Stop bridge, dashboard, and any ollama we started
+  restart        stop && start
+  status         Show running state and URLs
+  logs [name]    Tail logs (default: bridge; also: ollama, dashboard)
+  smoke          POST a synthetic SQLi sample to /analyse and print the response
+  token          Print the auth token from config.yaml
+
+state:  $RUN/*.pid
+logs:   $RUN/*.log
+config: $CONFIG
+EOF
+        [[ -z "$cmd" ]] && exit 2 || exit 0
+        ;;
+    *)
+        die "unknown command: '$cmd' (try 'argus help')"
+        ;;
+esac

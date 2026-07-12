@@ -67,10 +67,20 @@ cat <<DONE
 === Install complete ===
 Default LLM: $DEFAULT_MODEL   (override with ARGUS_MODEL env var before install)
 Next steps:
-  1. Start Ollama:               ollama serve   (in its own terminal)
-  2. Start the Argus bridge:     source $VENV/bin/activate && python -m llm_bridge.bridge
-  3. Start the dashboard:        source $VENV/bin/activate && streamlit run dashboard/app.py
-  4. Load the Burp extension:    $REPO_ROOT/burp_extension/llm_analyser.py
+echo "=== Install complete ==="
+echo "Default LLM: $DEFAULT_MODEL   (override with ARGUS_MODEL env var before install)"
+echo ""
+echo "Start everything with one command:"
+echo "  $REPO/bin/argus start"
+echo ""
+echo "Then:"
+echo "  $REPO/bin/argus status     # check running state"
+echo "  $REPO/bin/argus smoke      # send a synthetic SQLi to /analyse"
+echo "  $REPO/bin/argus logs       # tail the bridge log"
+echo "  $REPO/bin/argus stop       # tear it all down"
+echo ""
+echo "Dashboard: http://127.0.0.1:8501    Bridge: http://127.0.0.1:8765"
+echo "Burp extension (optional): $REPO/burp_extension/llm_analyser.py"
 
 For full details see USAGE.md.
 DONE
