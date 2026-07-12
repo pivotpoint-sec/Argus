@@ -3,8 +3,9 @@ Argus live-findings dashboard (Streamlit).
 
 Security intent: give the operator a single, local-only pane of glass onto
 the current engagement. Talks exclusively to the local bridge on
-127.0.0.1, sends the X-Argus-Token shared secret, and uses a single
-/state endpoint per refresh to keep network chatter and UI jitter minimal.
+127.0.0.1 (or the configured bridge_host when running under docker-compose),
+sends the X-Argus-Token shared secret, and uses a single /state endpoint
+per refresh to keep network chatter and UI jitter minimal.
 """
 from __future__ import annotations
 
@@ -18,7 +19,6 @@ from typing import Any
 import httpx
 import pandas as pd
 import streamlit as st
-import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -27,8 +27,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 @st.cache_data(ttl=30)
 def _load_config():
-    with (PROJECT_ROOT / "config.yaml").open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+    # Delegate to llm_bridge.config.load_config so the env overlay
+    # (OLLAMA_URL, ARGUS_TOKEN, BRIDGE_HOST, BRIDGE_PORT, ...) applies here
+    # too. Otherwise docker-compose can set env vars for the dashboard
+    # container that would be silently ignored.
+    from llm_bridge.config import load_config
+    return load_config()
 
 
 def _bridge_base():

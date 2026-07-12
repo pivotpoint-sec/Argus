@@ -1,11 +1,14 @@
 # -----------------------------------------------------------------------------
 # One-command local stack: Ollama + Argus bridge + Streamlit dashboard.
 #
-# Security: every service binds ONLY to 127.0.0.1 on the host. The internal
-# compose network is how they talk to each other. Nothing is published to
-# the LAN.
+# Security: every host-published port binds ONLY to 127.0.0.1. The internal
+# compose network is how the services reach each other. Nothing is exposed
+# to the LAN.
+#
+# Prerequisite: export ARGUS_TOKEN before `docker compose up`. Generate one with:
+#   export ARGUS_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+# The bridge and dashboard read it via the env-overlay pass in llm_bridge/config.py.
 # -----------------------------------------------------------------------------
-version: "3.9"
 
 services:
   ollama:
@@ -23,24 +26,43 @@ services:
     container_name: argus-bridge
     depends_on: [ollama]
     environment:
-      # The bridge reads config.yaml; override the ollama URL here so it
-      # reaches the sibling container.
+      # Point at the sibling container instead of localhost. Now honoured
+      # because llm_bridge/config.py overlays env on top of the YAML.
       OLLAMA_URL: http://ollama:11434
+      # Shared secret. Fails fast if unset — no accidental "wide-open bridge".
+      ARGUS_TOKEN: ${ARGUS_TOKEN:?ARGUS_TOKEN must be exported before docker compose up}
+      # Inside the container we need to bind to 0.0.0.0 so the sibling
+      # dashboard container can reach us; host access still limited by the
+      # 127.0.0.1: port publish above.
+      BRIDGE_HOST: 0.0.0.0
+    # Named volumes for mutable state so uid 10001 in the container can write
+    # them. The image itself carries a baked-in copy of the code and config.
     volumes:
-      - ./:/app
+      - findings:/app/storage
+      - argus-logs:/app/logs
     ports:
       - "127.0.0.1:8765:8765"
-    command: ["uvicorn", "llm_bridge.bridge:app", "--host", "0.0.0.0", "--port", "8765"]
 
   dashboard:
     image: argus:latest
     container_name: argus-dashboard
     depends_on: [bridge]
-    volumes:
-      - ./:/app
+    environment:
+      # Same shared secret. Dashboard sends it as X-Argus-Token to the bridge.
+      ARGUS_TOKEN: ${ARGUS_TOKEN:?ARGUS_TOKEN must be exported before docker compose up}
+      # Talk to the bridge sibling container instead of localhost.
+      BRIDGE_HOST: bridge
     ports:
       - "127.0.0.1:8501:8501"
-    command: ["streamlit", "run", "dashboard/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    command:
+      - streamlit
+      - run
+      - dashboard/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --browser.gatherUsageStats=false
 
 volumes:
   ollama:
+  findings:
+  argus-logs:
