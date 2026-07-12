@@ -2,12 +2,12 @@
 
 [![tests](https://github.com/pivotpoint-sec/Argus/actions/workflows/tests.yml/badge.svg)](https://github.com/pivotpoint-sec/Argus/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![python: 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/)
 
 Argus is a Burp Suite extension paired with a local FastAPI bridge that runs
-a locally-hosted LLM (Ollama / Mistral) plus a tier of deterministic OWASP-
-aligned detectors to triage web application traffic in real time. It sits
-next to Burp, reads every request/response flowing through the proxy,
+a locally-hosted LLM (Ollama, phi3 by default) plus a tier of deterministic
+OWASP-aligned detectors to triage web application traffic in real time. It
+sits next to Burp, reads every request/response flowing through the proxy,
 persists findings to SQLite, indexes them in ChromaDB for cross-request
 semantic memory, and surfaces results in a Streamlit dashboard.
 
@@ -20,6 +20,9 @@ cannot poison findings.
 
 ## Features
 
+- **Lean install footprint** — embeddings via
+  [fastembed](https://github.com/qdrant/fastembed) (ONNX runtime, no torch,
+  no CUDA wheels). Whole venv is ~500 MB on Linux, ~750 MB on Windows.
 - **20+ deterministic detectors** covering the OWASP Top 10 (2021): SQLi,
   XSS, command injection, XXE, SSRF, JWT misconfiguration, HTTP request
   smuggling, GraphQL misconfiguration, insecure deserialisation, mass
@@ -70,9 +73,12 @@ cannot poison findings.
   kept/dropped, dedup collapsed, detector findings.
 - **JSON-structured logs** with correlation IDs propagated from Burp
   into DB rows.
+- **One-command lifecycle** — `./bin/argus start | stop | status |
+  smoke | logs` runs and inspects the whole stack. No manual
+  `export ARGUS_TOKEN`, no juggling three terminals.
 - **Docker-compose** starts Ollama + bridge + dashboard in one command,
   all bound to `127.0.0.1`.
-- **80+ automated tests** covering filter, detectors, redaction, cache,
+- **83 automated tests** covering filter, detectors, redaction, cache,
   JSON extraction, chain detection, confirmer, recommender, consistency
   voting, SARIF shape, and an end-to-end pipeline run.
 
@@ -80,6 +86,8 @@ cannot poison findings.
 
 ```
 argus/
+├── bin/
+│   └── argus                  # One-command lifecycle: start/stop/status/logs/smoke
 ├── burp_extension/
 │   ├── llm_analyser.py        # Burp legacy IBurpExtender extension (Jython 2.7)
 │   └── prompts.py             # Versioned system + user prompts
@@ -98,7 +106,7 @@ argus/
 │   ├── router.py              # Multi-model dispatcher
 │   ├── critique.py            # Self-critique / pruning pass
 │   ├── consistency.py         # LLM self-consistency voting
-│   ├── memory.py              # ChromaDB session memory + dedup
+│   ├── memory.py              # ChromaDB session memory + fastembed dedup
 │   ├── sarif.py               # SARIF 2.1.0 export
 │   ├── redact.py              # Sensitive-data scrubbing
 │   ├── auth.py                # Bearer-token guard
@@ -116,7 +124,7 @@ argus/
 │   ├── install.sh             # Linux / macOS installer
 │   ├── install.ps1            # Windows installer
 │   └── requirements.txt       # Pinned dependencies
-├── tests/                     # 80+ pytest tests
+├── tests/                     # 83 pytest tests
 ├── config.yaml                # ALL runtime knobs
 ├── Dockerfile                 # Non-root Python 3.11-slim image
 ├── docker-compose.yml         # Ollama + bridge + dashboard, all local
@@ -130,12 +138,16 @@ argus/
 
 ## Quick install
 
-**Linux / macOS:**
+Requires Python 3.11, 3.12, or 3.13 (not 3.14 — chromadb's transitive
+`tokenizers` dependency has no cp314 wheels yet).
+
+**Linux / macOS / Kali:**
 
 ```bash
 git clone https://github.com/pivotpoint-sec/Argus.git
 cd Argus
 ./installer/install.sh
+./bin/argus start
 ```
 
 **Windows (PowerShell):**
@@ -144,29 +156,53 @@ cd Argus
 git clone https://github.com/pivotpoint-sec/Argus.git
 cd Argus
 .\installer\install.ps1
+# bin/argus is a bash script; run under WSL or use the manual 3-terminal
+# flow described below.
 ```
 
-The installer creates a venv, installs deps, pulls the default Ollama
-model, generates a fresh auth token in `config.yaml`, and prints the
-next-step instructions.
+The installer creates a venv, installs deps (fastembed embeddings, no
+torch/CUDA), pulls the default Ollama model (phi3, ~2 GB), and generates
+a fresh auth token in `config.yaml`. `./bin/argus start` then brings up
+Ollama, bridge, and dashboard in the background.
+
+## First run
+
+Once `argus start` returns, the dashboard is at `http://127.0.0.1:8501`
+and the bridge accepts `/analyse` at `http://127.0.0.1:8765`. Everything
+else lives under `./bin/argus`:
+
+| Command             | Effect                                                          |
+| ------------------- | --------------------------------------------------------------- |
+| `argus start`       | Start ollama (if not running), bridge, dashboard. Idempotent.   |
+| `argus stop`        | Clean teardown of bridge, dashboard, and any ollama we started. |
+| `argus restart`     | stop && start.                                                  |
+| `argus status`      | Show running state and URLs.                                    |
+| `argus logs [name]` | Tail a log (`bridge` default; also `ollama`, `dashboard`).      |
+| `argus smoke`       | POST a synthetic SQLi to `/analyse` and print the JSON.         |
+| `argus token`       | Print the auth token from `config.yaml`.                        |
+
+PIDs and logs land under `.run/` (gitignored). The launcher reads
+`auth.token` straight out of `config.yaml`, so no `export ARGUS_TOKEN`
+in your shell.
 
 ## Manual install
 
-If you'd rather do it yourself:
+If you'd rather assemble each piece yourself, or you need to debug the
+bridge with foreground logs:
 
-1. Install [Ollama](https://ollama.com/download) and pull at least one model:
+1. Install [Ollama](https://ollama.com/download) and pull the default model:
 
     ```bash
-    ollama pull mistral
+    ollama pull phi3         # ~2 GB, the default
+    ollama pull mistral      # optional: broader general triage
     ollama pull llama3       # optional: used by the auth router lane
     ollama pull codellama    # optional: used by the code / SSTI router lane
-    ollama pull phi3         # optional: used by the critique pass
     ```
 
-2. Install Python dependencies (Python 3.11+):
+2. Install Python dependencies (Python 3.11-3.13):
 
     ```bash
-    python -m venv .venv
+    python3 -m venv .venv
     source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
     pip install -r requirements.txt
     ```
@@ -221,6 +257,10 @@ If you'd rather do it yourself:
          http://127.0.0.1:8765/state | python -m json.tool | head -40
     ```
 
+Everything from step 3 onward is what `./bin/argus start` automates. Use
+the manual flow when you want foreground logs, want to run a debugger
+against the bridge, or want to swap out one component at a time.
+
 For a step-by-step first-run guide, see [USAGE.md](USAGE.md) and
 [TEST_LOCAL.md](TEST_LOCAL.md).
 
@@ -230,7 +270,7 @@ For a step-by-step first-run guide, see [USAGE.md](USAGE.md) and
 docker compose up --build
 # Bridge:    http://127.0.0.1:8765
 # Dashboard: http://127.0.0.1:8501
-# Ollama:    http://127.0.0.1:11434 (run: docker exec argus-ollama ollama pull mistral)
+# Ollama:    http://127.0.0.1:11434 (run: docker exec argus-ollama ollama pull phi3)
 ```
 
 Every service binds to `127.0.0.1` on the host; the compose network is
@@ -240,11 +280,11 @@ how they reach each other.
 
 | Model         | Size | Best for                              | Min RAM |
 | ------------- | ---- | ------------------------------------- | ------- |
+| Phi-3 Mini    | 2GB  | **Default.** High-volume triage, critique pass | 4GB     |
 | Mistral 7B    | 4GB  | Fast general triage, good JSON output | 8GB     |
-| LLaMA 3 8B    | 5GB  | Stronger reasoning, recommended start | 8GB     |
+| LLaMA 3 8B    | 5GB  | Stronger reasoning                    | 8GB     |
 | LLaMA 3 70B   | 40GB | Highest quality, report writing       | 48GB    |
 | CodeLlama 34B | 20GB | Code-level vulns: SSTI, deserialise   | 24GB    |
-| Phi-3 Mini    | 2GB  | High-volume triage, critique pass     | 4GB     |
 | Mixtral 8x7B  | 26GB | Balanced breadth + depth              | 32GB    |
 
 Switch models via `config.yaml` (`model:`) or enable the multi-model
